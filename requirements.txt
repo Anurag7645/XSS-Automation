@@ -4,3 +4,4 @@ selenium
 stem
 argparse
 concurrent.futures
+urllib3
