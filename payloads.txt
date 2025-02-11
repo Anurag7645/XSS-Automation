@@ -1,0 +1,4 @@
+<script>alert('XSS')</script>
+"><script>alert(1)</script>
+<img src=x onerror=alert('XSS')>
+' onmouseover=alert(1) '
