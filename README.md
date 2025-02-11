@@ -2,7 +2,7 @@
 
 An automated XSS injection tool with IP rotation & payload encoding.
 
-## Please use it for ethical purpose only, this is only for educational purpose.
+## Please use it for ethical reasons only, this is only for educational purposes.
 
 ## Features
 ✅ Multi-threading for fast scanning  
