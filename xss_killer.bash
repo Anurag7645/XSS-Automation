@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 # Run the tool
 echo "[⚡] Running XSS Killer..."
-python3 xss_killer.py "$1"
+python3 xss_tool.py "$1"
 
 # Deactivate venv after execution
 deactivate
